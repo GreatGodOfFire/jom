@@ -5,7 +5,7 @@ use crate::{
     utf8::ModifiedUtf8,
 };
 
-pub struct ConstantPool(pub Vec<ConstantPoolIndex>);
+pub struct ConstantPool(pub(crate) Vec<ConstantPoolIndex>);
 
 #[binrw::parser(reader: r, endian: e)]
 pub(crate) fn constant_pool_parser(count: (u16,)) -> BinResult<Vec<RawConstantPoolIndex>> {
@@ -35,7 +35,7 @@ impl ConstantPool {
         self.0.len()
     }
 
-    pub fn read(&self, index: u16) -> JomResult<ConstantPoolIndex> {
+    pub fn get(&self, index: u16) -> JomResult<ConstantPoolIndex> {
         self.0
             .get(index as usize)
             .cloned()
@@ -52,12 +52,12 @@ impl ConstantPool {
         Err(JomError::not_in_cp(format!("{index:?}")))
     }
 
-    pub fn read_utf8(&self, index: u16) -> JomResult<String> {
-        self.read(index).and_then(ConstantPoolIndex::into_utf8)
+    pub fn get_utf8(&self, index: u16) -> JomResult<String> {
+        self.get(index).and_then(ConstantPoolIndex::into_utf8)
     }
 
-    pub fn read_class(&self, index: u16) -> JomResult<String> {
-        self.read(index).and_then(ConstantPoolIndex::into_class)
+    pub fn get_class(&self, index: u16) -> JomResult<String> {
+        self.get(index).and_then(ConstantPoolIndex::into_class)
     }
 
     pub fn find_utf8(&self, s: String) -> JomResult<u16> {

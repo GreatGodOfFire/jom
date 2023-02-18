@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use binrw::{binrw, BinRead, VecArgs};
 
-use crate::{constant_pool::ConstantPool, error::JomResult, method::code::Code};
+use crate::{constant_pool::{ConstantPool, ConstantPoolIndex}, error::{JomResult, JomError}, method::code::Code};
 
 #[binrw]
 pub(crate) struct RawAttribute {
@@ -15,8 +15,33 @@ pub(crate) struct RawAttribute {
 }
 
 impl RawAttribute {
+    pub fn into_field_attr(self, cp: &ConstantPool) -> JomResult<FieldAttribute> {
+        let name = cp.get_utf8(self.name)?;
+
+        match name.as_str() {
+            "ConstantValue" => {
+                let value_idx = <u16 as BinRead>::read_be(&mut Cursor::new(self.info))?;
+                let value = cp.get(value_idx)?;
+
+                Ok(FieldAttribute::ConstantValue(ConstantValue::from_cp_index(
+                    value,
+                )?))
+            }
+            "Synthetic" => Ok(FieldAttribute::Synthetic),
+            "Deprecated" => Ok(FieldAttribute::Deprecated),
+            "Signature" => {
+                let value_idx = <u16 as BinRead>::read_be(&mut Cursor::new(self.info))?;
+                let value = cp.get_utf8(value_idx)?;
+
+                Ok(FieldAttribute::Signature(value))
+            }
+            _ => Ok(FieldAttribute::Unknown(name, self.info)),
+        }
+    }
+
+
     pub fn into_method_attr(self, cp: &ConstantPool) -> JomResult<MethodAttribute> {
-        let name = cp.read_utf8(self.name)?;
+        let name = cp.get_utf8(self.name)?;
 
         match name.as_str() {
             "Code" => Ok(MethodAttribute::Code(Code::read(&self.info, cp)?)),
@@ -24,7 +49,7 @@ impl RawAttribute {
             "Deprecated" => Ok(MethodAttribute::Deprecated),
             "Signature" => {
                 let value_idx = <u16 as BinRead>::read_be(&mut Cursor::new(self.info))?;
-                let value = cp.read_utf8(value_idx)?;
+                let value = cp.get_utf8(value_idx)?;
 
                 Ok(MethodAttribute::Signature(value))
             }
@@ -33,7 +58,7 @@ impl RawAttribute {
     }
 
     pub fn into_code_attr(self, cp: &ConstantPool) -> JomResult<CodeAttribute> {
-        let name = cp.read_utf8(self.name)?;
+        let name = cp.get_utf8(self.name)?;
 
         match name.as_str() {
             "LineNumberTable" => {
@@ -94,6 +119,42 @@ impl RawAttribute {
     }
 }
 
+pub enum FieldAttribute {
+    ConstantValue(ConstantValue),
+    Synthetic,
+    Deprecated,
+    Signature(String),
+    RuntimeVisibleAnnotations,
+    RuntimeInvisibleAnnotations,
+    RuntimeVisibleTypeAnnotations,
+    RuntimeInvisibleTypeAnnotations,
+    Unknown(String, Vec<u8>),
+}
+
+pub enum ConstantValue {
+    Integer(i32),
+    Float(f32),
+    Long(i64),
+    Double(f64),
+    String(String),
+}
+
+impl ConstantValue {
+    pub(crate) fn from_cp_index(cp_index: ConstantPoolIndex) -> JomResult<Self> {
+        match cp_index {
+            ConstantPoolIndex::Integer(i) => Ok(Self::Integer(i)),
+            ConstantPoolIndex::Float(f) => Ok(Self::Float(f)),
+            ConstantPoolIndex::Long(l) => Ok(Self::Long(l)),
+            ConstantPoolIndex::Double(d) => Ok(Self::Double(d)),
+            ConstantPoolIndex::String(s) => Ok(Self::String(s)),
+            x => Err(JomError::ConstantPoolIndexError(
+                "Integer, Float, Long, Double or String",
+                x.name(),
+            )),
+        }
+    }
+}
+
 pub enum MethodAttribute {
     Code(Code),
     Exceptions,
@@ -109,39 +170,6 @@ pub enum MethodAttribute {
     RuntimeVisibleTypeAnnotations,
     RuntimeInvisibleTypeAnnotations,
     Unknown(String, Vec<u8>),
-}
-
-impl MethodAttribute {
-    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> JomResult<RawAttribute> {
-        match self {
-            MethodAttribute::Code { .. } => todo!(),
-            MethodAttribute::Exceptions => todo!(),
-            MethodAttribute::RuntimeVisibleParameterAnnotations => todo!(),
-            MethodAttribute::RuntimeInvisibleParameterAnnotations => todo!(),
-            MethodAttribute::AnnotationDefault => todo!(),
-            MethodAttribute::MethodParameters => todo!(),
-            MethodAttribute::Synthetic => Ok(RawAttribute {
-                name: cp.find_utf8("Synthetic".to_owned())?,
-                info: vec![],
-            }),
-            MethodAttribute::Deprecated => Ok(RawAttribute {
-                name: cp.find_utf8("Deprecated".to_owned())?,
-                info: vec![],
-            }),
-            MethodAttribute::Signature(s) => Ok(RawAttribute {
-                name: cp.find_utf8("Signature".to_owned())?,
-                info: cp.find_utf8(s.clone())?.to_be_bytes().to_vec(),
-            }),
-            MethodAttribute::RuntimeVisibleAnnotations => todo!(),
-            MethodAttribute::RuntimeInvisibleAnnotations => todo!(),
-            MethodAttribute::RuntimeVisibleTypeAnnotations => todo!(),
-            MethodAttribute::RuntimeInvisibleTypeAnnotations => todo!(),
-            MethodAttribute::Unknown(name, info) => Ok(RawAttribute {
-                name: cp.find_utf8(name.clone())?,
-                info: info.clone(),
-            }),
-        }
-    }
 }
 
 pub enum CodeAttribute {
@@ -179,8 +207,8 @@ impl RawLocalVariableTableIndex {
             index,
         } = self;
 
-        let name = constant_pool.read_utf8(name)?;
-        let descriptor = constant_pool.read_utf8(descriptor)?;
+        let name = constant_pool.get_utf8(name)?;
+        let descriptor = constant_pool.get_utf8(descriptor)?;
 
         Ok(LocalVariableTableIndex {
             start_pc,
@@ -222,8 +250,8 @@ impl RawLocalVariableTypeTableIndex {
             index,
         } = self;
 
-        let name = constant_pool.read_utf8(name)?;
-        let descriptor = constant_pool.read_utf8(descriptor)?;
+        let name = constant_pool.get_utf8(name)?;
+        let descriptor = constant_pool.get_utf8(descriptor)?;
 
         Ok(LocalVariableTypeTableIndex {
             start_pc,

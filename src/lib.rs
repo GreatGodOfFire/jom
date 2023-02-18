@@ -73,11 +73,11 @@ impl ClassFile {
 
         let constant_pool = process_cp(constant_pool)?;
 
-        let this_class = constant_pool.read_class(this_class)?;
-        let super_class = constant_pool.read_class(super_class)?;
+        let this_class = constant_pool.get_class(this_class)?;
+        let super_class = constant_pool.get_class(super_class)?;
         let interfaces = interfaces
             .into_iter()
-            .map(|x| constant_pool.read_class(x))
+            .map(|x| constant_pool.get_class(x))
             .collect::<JomResult<Vec<_>>>()?;
         let fields = fields
             .into_iter()

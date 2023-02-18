@@ -22,8 +22,8 @@ pub(crate) struct RawMethodInfo {
 
 impl RawMethodInfo {
     pub fn into_method_info(self, cp: &ConstantPool) -> JomResult<MethodInfo> {
-        let name = cp.read_utf8(self.name)?;
-        let descriptor = cp.read_utf8(self.descriptor)?;
+        let name = cp.get_utf8(self.name)?;
+        let descriptor = cp.get_utf8(self.descriptor)?;
 
         Ok(MethodInfo {
             access_flags: self.access_flags,
@@ -43,22 +43,4 @@ pub struct MethodInfo {
     pub name: String,
     pub descriptor: String,
     pub attributes: Vec<MethodAttribute>,
-}
-
-impl MethodInfo {
-    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> JomResult<RawMethodInfo> {
-        let name = cp.find_utf8(self.name.clone())?;
-        let descriptor = cp.find_utf8(self.descriptor.clone())?;
-
-        Ok(RawMethodInfo {
-            access_flags: self.access_flags,
-            name,
-            descriptor,
-            attributes: self
-                .attributes
-                .iter()
-                .map(|x| x.to_raw(cp))
-                .collect::<JomResult<Vec<_>>>()?,
-        })
-    }
 }

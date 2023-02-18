@@ -46,7 +46,7 @@ impl RawException {
             catch_type,
         } = self;
 
-        let catch_type = constant_pool.read_class(catch_type)?;
+        let catch_type = constant_pool.get_class(catch_type)?;
 
         Ok(Exception {
             start_pc,

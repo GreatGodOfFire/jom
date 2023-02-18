@@ -1,6 +1,3 @@
-use std::io::Cursor;
-
-use binrw::BinRead;
 use jom::ClassFile;
 
 #[test]
