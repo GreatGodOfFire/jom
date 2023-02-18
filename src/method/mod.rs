@@ -15,8 +15,6 @@ pub(crate) struct RawMethodInfo {
     descriptor: u16,
     #[br(temp)]
     #[bw(calc = attributes.len() as u16)]
-    #[br(dbg)]
-
     attributes_count: u16,
     #[br(count = attributes_count)]
     attributes: Vec<RawAttribute>,

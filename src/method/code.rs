@@ -24,7 +24,6 @@ pub(super) struct RawCode {
     exception_table: Vec<RawException>,
     #[br(temp)]
     #[bw(calc = attributes.len() as u16)]
-    #[br(dbg)]
     attributes_count: u16,
     #[br(count = attributes_count)]
     attributes: Vec<RawAttribute>,

@@ -9,7 +9,6 @@ pub(crate) struct RawAttribute {
     name: u16,
     #[br(temp)]
     #[bw(calc = info.len() as u32)]
-    #[br(dbg)]
     info_length: u32,
     #[br(count = info_length)]
     info: Vec<u8>,
