@@ -1,10 +1,10 @@
 use std::io::Cursor;
 
-use binrw::{binrw, BinRead, BinResult};
+use binrw::{binrw, BinRead};
 
 use crate::{
     constant_pool::{ConstantPool, ConstantPoolIndex},
-    e,
+    error::{JomError, JomResult},
 };
 
 #[binrw]
@@ -20,9 +20,9 @@ pub(crate) struct RawFieldInfo {
 }
 
 impl RawFieldInfo {
-    pub fn into_field_info(self, cp: &ConstantPool) -> BinResult<FieldInfo> {
-        let name = e!(cp.read_utf8(self.name), i)?;
-        let descriptor = e!(cp.read_utf8(self.descriptor), i)?;
+    pub fn into_field_info(self, cp: &ConstantPool) -> JomResult<FieldInfo> {
+        let name = cp.read_utf8(self.name)?;
+        let descriptor = cp.read_utf8(self.descriptor)?;
 
         Ok(FieldInfo {
             access_flags: self.access_flags,
@@ -32,7 +32,7 @@ impl RawFieldInfo {
                 .attributes
                 .into_iter()
                 .map(|x| x.into_attr(cp))
-                .collect::<BinResult<Vec<_>>>()?,
+                .collect::<JomResult<Vec<_>>>()?,
         })
     }
 }
@@ -45,9 +45,9 @@ pub struct FieldInfo {
 }
 
 impl FieldInfo {
-    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> BinResult<RawFieldInfo> {
-        let name = e!(cp.index_of_utf8(self.name.clone()), v)?;
-        let descriptor = e!(cp.index_of_utf8(self.descriptor.clone()), v)?;
+    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> JomResult<RawFieldInfo> {
+        let name = cp.find_utf8(self.name.clone())?;
+        let descriptor = cp.find_utf8(self.descriptor.clone())?;
 
         Ok(RawFieldInfo {
             access_flags: self.access_flags,
@@ -57,7 +57,7 @@ impl FieldInfo {
                 .attributes
                 .iter()
                 .map(|x| x.to_raw(cp))
-                .collect::<BinResult<Vec<_>>>()?,
+                .collect::<JomResult<Vec<_>>>()?,
         })
     }
 }
@@ -73,24 +73,23 @@ pub(crate) struct RawFieldAttribute {
 }
 
 impl RawFieldAttribute {
-    pub fn into_attr(self, cp: &ConstantPool) -> BinResult<FieldAttribute> {
-        let name = e!(cp.read_utf8(self.name), i)?;
+    pub fn into_attr(self, cp: &ConstantPool) -> JomResult<FieldAttribute> {
+        let name = cp.read_utf8(self.name)?;
 
         match name.as_str() {
             "ConstantValue" => {
                 let value_idx = <u16 as BinRead>::read_be(&mut Cursor::new(self.info))?;
-                let value = e!(cp.read(value_idx), i)?;
+                let value = cp.read(value_idx)?;
 
-                Ok(FieldAttribute::ConstantValue(e!(
-                    ConstantValue::from_cp_index(value),
-                    i
+                Ok(FieldAttribute::ConstantValue(ConstantValue::from_cp_index(
+                    value,
                 )?))
             }
             "Synthetic" => Ok(FieldAttribute::Synthetic),
             "Deprecated" => Ok(FieldAttribute::Deprecated),
             "Signature" => {
                 let value_idx = <u16 as BinRead>::read_be(&mut Cursor::new(self.info))?;
-                let value = e!(cp.read_utf8(value_idx), i)?;
+                let value = cp.read_utf8(value_idx)?;
 
                 Ok(FieldAttribute::Signature(value))
             }
@@ -120,14 +119,17 @@ pub enum ConstantValue {
 }
 
 impl ConstantValue {
-    fn from_cp_index(cp_index: &ConstantPoolIndex) -> Option<Self> {
+    fn from_cp_index(cp_index: ConstantPoolIndex) -> JomResult<Self> {
         match cp_index {
-            ConstantPoolIndex::Integer(i) => Some(Self::Integer(*i)),
-            ConstantPoolIndex::Float(f) => Some(Self::Float(*f)),
-            ConstantPoolIndex::Long(l) => Some(Self::Long(*l)),
-            ConstantPoolIndex::Double(d) => Some(Self::Double(*d)),
-            ConstantPoolIndex::String(s) => Some(Self::String(s.clone())),
-            _ => None,
+            ConstantPoolIndex::Integer(i) => Ok(Self::Integer(i)),
+            ConstantPoolIndex::Float(f) => Ok(Self::Float(f)),
+            ConstantPoolIndex::Long(l) => Ok(Self::Long(l)),
+            ConstantPoolIndex::Double(d) => Ok(Self::Double(d)),
+            ConstantPoolIndex::String(s) => Ok(Self::String(s)),
+            x => Err(JomError::ConstantPoolIndexError(
+                "Integer, Float, Long, Double or String",
+                x.name(),
+            )),
         }
     }
 
@@ -143,30 +145,30 @@ impl ConstantValue {
 }
 
 impl FieldAttribute {
-    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> BinResult<RawFieldAttribute> {
+    pub(crate) fn to_raw(&self, cp: &ConstantPool) -> JomResult<RawFieldAttribute> {
         match self {
             FieldAttribute::ConstantValue(v) => Ok(RawFieldAttribute {
-                name: e!(cp.index_of_utf8("ConstantValue".to_owned()), v)?,
-                info: e!(cp.index_of(v.to_cp_index()), v)?.to_be_bytes().to_vec(),
+                name: cp.find_utf8("ConstantValue".to_owned())?,
+                info: cp.find(v.to_cp_index())?.to_be_bytes().to_vec(),
             }),
             FieldAttribute::Synthetic => Ok(RawFieldAttribute {
-                name: e!(cp.index_of_utf8("Synthetic".to_owned()), v)?,
+                name: cp.find_utf8("Synthetic".to_owned())?,
                 info: vec![],
             }),
             FieldAttribute::Deprecated => Ok(RawFieldAttribute {
-                name: e!(cp.index_of_utf8("Deprecated".to_owned()), v)?,
+                name: cp.find_utf8("Deprecated".to_owned())?,
                 info: vec![],
             }),
             FieldAttribute::Signature(s) => Ok(RawFieldAttribute {
-                name: e!(cp.index_of_utf8("ConstantValue".to_owned()), v)?,
-                info: e!(cp.index_of_utf8(s.clone()), v)?.to_be_bytes().to_vec(),
+                name: cp.find_utf8("Signature".to_owned())?,
+                info: cp.find_utf8(s.clone())?.to_be_bytes().to_vec(),
             }),
             FieldAttribute::RuntimeVisibleAnnotations => todo!(),
             FieldAttribute::RuntimeInvisibleAnnotations => todo!(),
             FieldAttribute::RuntimeVisibleTypeAnnotations => todo!(),
             FieldAttribute::RuntimeInvisibleTypeAnnotations => todo!(),
             FieldAttribute::Unknown(name, info) => Ok(RawFieldAttribute {
-                name: e!(cp.index_of_utf8(name.clone()), v)?,
+                name: cp.find_utf8(name.clone())?,
                 info: info.clone(),
             }),
         }

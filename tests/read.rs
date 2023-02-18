@@ -7,5 +7,5 @@ use jom::ClassFile;
 fn read() {
     let file = include_bytes!("HelloWorld.class");
 
-    ClassFile::read(&mut Cursor::new(file)).unwrap();
+    ClassFile::read(file).unwrap();
 }

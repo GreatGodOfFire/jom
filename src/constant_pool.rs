@@ -1,41 +1,15 @@
-use binrw::{binrw, BinRead};
+use binrw::{binrw, BinRead, BinResult};
 
-use crate::utf8::ModifiedUtf8;
+use crate::{
+    error::{JomError, JomResult},
+    utf8::ModifiedUtf8,
+};
 
-pub(crate) mod macros {
-    #[macro_export]
-    macro_rules! e {
-        ($e:expr, i) => {
-            e!($e, "Invalid constant pool index")
-        };
-        ($e:expr, v) => {
-            e!($e, "Value not in constant pool")
-        };
-        ($e:expr) => {
-            e!($e, "Invalid constant pool")
-        };
-        ($e:expr, $l:literal) => {
-            $e.ok_or(binrw::Error::Custom {
-                pos: 0,
-                err: Box::new($l),
-            })
-        };
-    }
-}
-
-#[binrw]
-#[brw(big)]
-pub struct ConstantPool {
-    #[br(temp)]
-    #[bw(calc(constant_pool.len() as u16 + 1))]
-    constant_pool_count: u16,
-    #[br(parse_with = |r, e, _: ()| constant_pool_parser(r, e, constant_pool_count))]
-    #[bw(map = write_cp)]
-    constant_pool: Vec<ConstantPoolIndex>,
-}
+pub struct ConstantPool(pub Vec<ConstantPoolIndex>);
 
 #[binrw::parser(reader: r, endian: e)]
-fn constant_pool_parser(count: u16) -> binrw::BinResult<Vec<ConstantPoolIndex>> {
+pub(crate) fn constant_pool_parser(count: (u16,)) -> BinResult<Vec<RawConstantPoolIndex>> {
+    let count = count.0;
     let mut raw_cp = vec![RawConstantPoolIndex::Unusable];
     let mut i = 1;
     while i < count {
@@ -50,49 +24,48 @@ fn constant_pool_parser(count: u16) -> binrw::BinResult<Vec<ConstantPoolIndex>> 
             i += 1;
         }
     }
-
-    process_cp(raw_cp)
+    
+    Ok(raw_cp)
 }
 
 impl ConstantPool {
     // As the constant pool length is the first index in the constant pool it will never be empty
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
-        self.constant_pool.len()
+        self.0.len()
     }
 
-    pub fn read(&self, index: u16) -> Option<&ConstantPoolIndex> {
-        self.constant_pool.get(index as usize)
+    pub fn read(&self, index: u16) -> JomResult<ConstantPoolIndex> {
+        self.0
+            .get(index as usize)
+            .cloned()
+            .ok_or(JomError::out_of_bounds(index))
     }
 
-    pub(crate) fn index_of(&self, index: ConstantPoolIndex) -> Option<u16> {
-        for (i, idx) in self.constant_pool.iter().enumerate() {
+    pub fn find(&self, index: ConstantPoolIndex) -> JomResult<u16> {
+        for (i, idx) in self.0.iter().enumerate() {
             if idx == &index {
-                return Some(i as u16);
+                return Ok(i as u16);
             }
         }
 
-        None
+        Err(JomError::not_in_cp(format!("{index:?}")))
     }
 
-    pub fn read_utf8(&self, index: u16) -> Option<String> {
-        self.read(index)
-            .cloned()
-            .and_then(ConstantPoolIndex::into_string)
+    pub fn read_utf8(&self, index: u16) -> JomResult<String> {
+        self.read(index).and_then(ConstantPoolIndex::into_utf8)
     }
 
-    pub fn read_class(&self, index: u16) -> Option<String> {
-        self.read(index)
-            .cloned()
-            .and_then(ConstantPoolIndex::into_class)
+    pub fn read_class(&self, index: u16) -> JomResult<String> {
+        self.read(index).and_then(ConstantPoolIndex::into_class)
     }
 
-    pub(crate) fn index_of_utf8(&self, s: String) -> Option<u16> {
-        self.index_of(ConstantPoolIndex::Utf8(s))
+    pub fn find_utf8(&self, s: String) -> JomResult<u16> {
+        self.find(ConstantPoolIndex::Utf8(s))
     }
 
-    pub(crate) fn index_of_class(&self, class: String) -> Option<u16> {
-        self.index_of(ConstantPoolIndex::Class(class))
+    pub fn find_class(&self, class: String) -> JomResult<u16> {
+        self.find(ConstantPoolIndex::Class(class))
     }
 }
 
@@ -203,26 +176,21 @@ pub enum ConstantPoolIndex {
     Unusable,
 }
 
-fn process_cp(raw_cp: Vec<RawConstantPoolIndex>) -> binrw::BinResult<Vec<ConstantPoolIndex>> {
+pub(crate) fn process_cp(raw_cp: Vec<RawConstantPoolIndex>) -> JomResult<ConstantPool> {
     let mut cp = vec![None; raw_cp.len()];
 
     for i in 0..raw_cp.len() {
-        resolve_index(i, &raw_cp, &mut cp);
+        resolve_index(i, &raw_cp, &mut cp)?;
     }
 
-    cp.into_iter()
-        .collect::<Option<Vec<_>>>()
-        .ok_or(binrw::Error::Custom {
-            pos: 0,
-            err: Box::new("Invalid constant pool"),
-        })
+    Ok(ConstantPool(cp.into_iter().collect::<Option<Vec<_>>>().unwrap()))
 }
 
 fn resolve_index<'a>(
     i: usize,
     raw_cp: &[RawConstantPoolIndex],
     cp: &'a mut Vec<Option<ConstantPoolIndex>>,
-) -> Option<&'a ConstantPoolIndex> {
+) -> JomResult<&'a ConstantPoolIndex> {
     if cp[i].is_none() {
         let raw = raw_cp[i].clone();
         cp[i] = match raw {
@@ -391,12 +359,7 @@ fn resolve_index<'a>(
         }
     }
 
-    return cp[i].as_ref();
-}
-
-#[allow(clippy::ptr_arg)]
-fn write_cp(_cp: &Vec<ConstantPoolIndex>) -> Vec<RawConstantPoolIndex> {
-    todo!()
+    return Ok(cp[i].as_ref().unwrap());
 }
 
 pub struct Fieldref {
@@ -432,187 +395,188 @@ pub struct InvokeDynamic {
 }
 
 impl ConstantPoolIndex {
-    pub fn into_utf8(self) -> Option<String> {
-        if let Self::Utf8(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn name(&self) -> &'static str {
+        match self {
+            ConstantPoolIndex::Utf8(_) => "Utf8",
+            ConstantPoolIndex::Integer(_) => "Integer",
+            ConstantPoolIndex::Float(_) => "Float",
+            ConstantPoolIndex::Long(_) => "Long",
+            ConstantPoolIndex::Double(_) => "Double",
+            ConstantPoolIndex::Class(_) => "Class",
+            ConstantPoolIndex::String(_) => "String",
+            ConstantPoolIndex::Fieldref { .. } => "Fieldref",
+            ConstantPoolIndex::Methodref { .. } => "Methodref",
+            ConstantPoolIndex::InterfaceMethodref { .. } => "InterfaceMethodref",
+            ConstantPoolIndex::NameAndType(_, _) => "NameAndType",
+            ConstantPoolIndex::MethodHandle { .. } => "MethodHandle",
+            ConstantPoolIndex::MethodType(_) => "MethodType",
+            ConstantPoolIndex::Dynamic { .. } => "Dynamic",
+            ConstantPoolIndex::InvokeDynamic { .. } => "InvokeDynamic",
+            ConstantPoolIndex::Module(_) => "Module",
+            ConstantPoolIndex::Package(_) => "Package",
+            ConstantPoolIndex::Unusable => "Unusable",
         }
     }
 
-    pub fn into_integer(self) -> Option<i32> {
-        if let Self::Integer(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_utf8(self) -> JomResult<String> {
+        match self {
+            Self::Utf8(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Utf8", x.name())),
         }
     }
 
-    pub fn into_float(self) -> Option<f32> {
-        if let Self::Float(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_integer(self) -> JomResult<i32> {
+        match self {
+            Self::Integer(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Integer", x.name())),
         }
     }
 
-    pub fn into_long(self) -> Option<i64> {
-        if let Self::Long(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_float(self) -> JomResult<f32> {
+        match self {
+            Self::Float(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Float", x.name())),
         }
     }
 
-    pub fn into_double(self) -> Option<f64> {
-        if let Self::Double(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_long(self) -> JomResult<i64> {
+        match self {
+            Self::Long(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Long", x.name())),
         }
     }
 
-    pub fn into_class(self) -> Option<String> {
-        if let Self::Class(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_double(self) -> JomResult<f64> {
+        match self {
+            Self::Double(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Double", x.name())),
         }
     }
 
-    pub fn into_string(self) -> Option<String> {
-        if let Self::String(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_class(self) -> JomResult<String> {
+        match self {
+            Self::Class(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Class", x.name())),
         }
     }
 
-    pub fn into_fieldref(self) -> Option<Fieldref> {
-        if let Self::Fieldref {
-            class,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(Fieldref {
+    pub fn into_string(self) -> JomResult<String> {
+        match self {
+            Self::String(x) => Ok(x),
+            x => Err(JomError::new_cp_index("String", x.name())),
+        }
+    }
+
+    pub fn into_fieldref(self) -> JomResult<Fieldref> {
+        match self {
+            Self::Fieldref {
                 class,
                 name,
                 descriptor,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn into_methodref(self) -> Option<Methodref> {
-        if let Self::Methodref {
-            class,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(Methodref {
+            } => Ok(Fieldref {
                 class,
                 name,
                 descriptor,
-            })
-        } else {
-            None
+            }),
+            x => Err(JomError::new_cp_index("Fieldref", x.name())),
         }
     }
 
-    pub fn into_interface_methodref(self) -> Option<InterfaceMethodref> {
-        if let Self::InterfaceMethodref {
-            class,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(InterfaceMethodref {
+    pub fn into_methodref(self) -> JomResult<Methodref> {
+        match self {
+            Self::Methodref {
                 class,
                 name,
                 descriptor,
-            })
-        } else {
-            None
+            } => Ok(Methodref {
+                class,
+                name,
+                descriptor,
+            }),
+            x => Err(JomError::new_cp_index("Methodref", x.name())),
         }
     }
 
-    pub fn into_name_and_type(self) -> Option<(String, String)> {
-        if let Self::NameAndType(x, y) = self {
-            Some((x, y))
-        } else {
-            None
+    pub fn into_interface_methodref(self) -> JomResult<InterfaceMethodref> {
+        match self {
+            Self::InterfaceMethodref {
+                class,
+                name,
+                descriptor,
+            } => Ok(InterfaceMethodref {
+                class,
+                name,
+                descriptor,
+            }),
+            x => Err(JomError::new_cp_index("InterfaceMethodref", x.name())),
         }
     }
 
-    pub fn into_method_handle(self) -> Option<MethodHandle> {
-        if let Self::MethodHandle {
-            kind,
-            class,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(MethodHandle {
+    pub fn into_name_and_type(self) -> JomResult<(String, String)> {
+        match self {
+            Self::NameAndType(x, y) => Ok((x, y)),
+            x => Err(JomError::new_cp_index("NameAndType", x.name())),
+        }
+    }
+
+    pub fn into_method_handle(self) -> JomResult<MethodHandle> {
+        match self {
+            Self::MethodHandle {
                 kind,
                 class,
                 name,
                 descriptor,
-            })
-        } else {
-            None
+            } => Ok(MethodHandle {
+                kind,
+                class,
+                name,
+                descriptor,
+            }),
+            x => Err(JomError::new_cp_index("MethodHandle", x.name())),
         }
     }
 
-    pub fn into_dynamic(self) -> Option<Dynamic> {
-        if let Self::Dynamic {
-            bootstrap_method_attr_index,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(Dynamic {
+    pub fn into_dynamic(self) -> JomResult<Dynamic> {
+        match self {
+            Self::Dynamic {
                 bootstrap_method_attr_index,
                 name,
                 descriptor,
-            })
-        } else {
-            None
-        }
-    }
-
-    pub fn into_invoke_dynamic(self) -> Option<InvokeDynamic> {
-        if let Self::InvokeDynamic {
-            bootstrap_method_attr_index,
-            name,
-            descriptor,
-        } = self
-        {
-            Some(InvokeDynamic {
+            } => Ok(Dynamic {
                 bootstrap_method_attr_index,
                 name,
                 descriptor,
-            })
-        } else {
-            None
+            }),
+            x => Err(JomError::new_cp_index("Dynamic", x.name())),
         }
     }
 
-    pub fn into_module(self) -> Option<String> {
-        if let Self::Module(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_invoke_dynamic(self) -> JomResult<InvokeDynamic> {
+        match self {
+            Self::InvokeDynamic {
+                bootstrap_method_attr_index,
+                name,
+                descriptor,
+            } => Ok(InvokeDynamic {
+                bootstrap_method_attr_index,
+                name,
+                descriptor,
+            }),
+            x => Err(JomError::new_cp_index("InvokeDynamic", x.name())),
         }
     }
 
-    pub fn into_package(self) -> Option<String> {
-        if let Self::Package(x) = self {
-            Some(x)
-        } else {
-            None
+    pub fn into_module(self) -> JomResult<String> {
+        match self {
+            Self::Module(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Module(x)", x.name())),
+        }
+    }
+
+    pub fn into_package(self) -> JomResult<String> {
+        match self {
+            Self::Package(x) => Ok(x),
+            x => Err(JomError::new_cp_index("Package(x)", x.name())),
         }
     }
 }
