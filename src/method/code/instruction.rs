@@ -389,11 +389,10 @@ pub enum Instruction {
     InvokeSpecial(u16),
     #[brw(magic = 0xb8u8)]
     InvokeStatic(u16),
-    // TODO: Find better way to express 0
     #[brw(magic = 0xb9u8)]
-    InvokeInterface(u16, u8, #[br(temp)] #[bw(calc = ())] #[brw(magic = 0u8)] ()),
+    InvokeInterface(u16, u8, #[br(temp, assert(self_2 == 0, "The 4. byte of `invokeinterface` is supposed to be 0."))] #[bw(calc = 0)] u8),
     #[brw(magic = 0xbau8)]
-    InvokeDynamic(u16, #[br(temp)] #[bw(calc = ())] #[brw(magic = 0u16)] ()),
+    InvokeDynamic(u16, #[br(temp, assert(self_1 == 0, "The last 2 bytes of `invokedynamic` are supposed to be 0"))] #[bw(calc = 0)] u16),
     #[brw(magic = 0xbbu8)]
     New(u16),
     #[brw(magic = 0xbcu8)]
