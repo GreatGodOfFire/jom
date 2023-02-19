@@ -53,7 +53,7 @@ pub enum Instruction {
     #[brw(magic = 0x17u8)]
     FLoad(u8),
     #[brw(magic = 0x18u8)]
-    Dload(u8),
+    DLoad(u8),
     #[brw(magic = 0x19u8)]
     ALoad(u8),
     #[brw(magic = 0x1au8)]
@@ -344,20 +344,22 @@ pub enum Instruction {
     Jsr(u16),
     #[brw(magic = 0xa9u8)]
     Ret(u8),
-    // TODO: TableSwitch
-    // #[brw(magic = 0xaau8)]
-    // TableSwitch {
-    //     #[br(align_before = 4)]
-    //     default: u32,
-    //     low: u32,
-    //     high: u32,
-    // }
-    //     
+    #[brw(magic = 0xaau8)]
+    TableSwitch {
+        #[br(align_before = 4)]
+        default: i32,
+        low: i32,
+        high: i32,
+        #[br(assert(low <= high))]
+        #[br(count = high - low + 1)]
+        offsets: Vec<i32>,
+    },
     #[brw(magic = 0xabu8)]
     LookupSwitch {
         #[br(align_before = 4)]
-        default: u32,
-        npairs: u32,
+        default: i32,
+        #[br(assert(npairs >= 0))]
+        npairs: i32,
         #[br(count = npairs)]
         pairs: Vec<(i32, i32)>,
     },
@@ -410,8 +412,8 @@ pub enum Instruction {
     MonitorEnter,
     #[brw(magic = 0xc3u8)]
     MonitorExit,
-    // TOOD: W I D E
-    // Wide
+    #[brw(magic = 0xc4u8)]
+    Wide(Wide),
     #[brw(magic = 0xc5u8)]
     MultiANewArray(u16, u8),
     #[brw(magic = 0xc6u8)]
@@ -435,4 +437,32 @@ pub enum AType {
     Short,
     Int,
     Long,
+}
+
+#[binrw]
+pub enum Wide {
+    #[brw(magic = 0x15u8)]
+    ILoad(u16),
+    #[brw(magic = 0x16u8)]
+    LLoad(u16),
+    #[brw(magic = 0x17u8)]
+    FLoad(u16),
+    #[brw(magic = 0x18u8)]
+    DLoad(u16),
+    #[brw(magic = 0x19u8)]
+    ALoad(u16),
+    #[brw(magic = 0x36u8)]
+    IStore(u16),
+    #[brw(magic = 0x37u8)]
+    LStore(u16),
+    #[brw(magic = 0x38u8)]
+    FStore(u16),
+    #[brw(magic = 0x39u8)]
+    DStore(u16),
+    #[brw(magic = 0x3au8)]
+    AStore(u16),
+    #[brw(magic = 0xa9u8)]
+    Ret(u16),
+    #[brw(magic = 0x84u8)]
+    IInc(u16, i16),
 }
