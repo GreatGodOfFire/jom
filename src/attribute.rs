@@ -111,10 +111,18 @@ impl RawAttribute {
 
                 Ok(CodeAttribute::LocalVariableTypeTable(table))
             }
-            "StackMapTable" => todo!(),
-            "RuntimeVisibleTypeAnnotations" => todo!(),
-            "RuntimeInvisibleTypeAnnotations" => todo!(),
+            // "StackMapTable" => todo!(),
+            // "RuntimeVisibleTypeAnnotations" => todo!(),
+            // "RuntimeInvisibleTypeAnnotations" => todo!(),
             _ => Ok(CodeAttribute::Unknown(name, self.info)),
+        }
+    }
+
+    pub fn into_class_attr(self, cp: &ConstantPool) -> JomResult<ClassAttribute> {
+        let name = cp.get_utf8(self.name)?;
+        
+        match name.as_str() {
+            _ => Ok(ClassAttribute::Unknown(name, self.info)),
         }
     }
 }
@@ -269,4 +277,27 @@ pub struct LocalVariableTypeTableIndex {
     pub name: String,
     pub descriptor: String,
     pub index: u16,
+}
+
+pub enum ClassAttribute {
+    SourceFile(String),
+    InnerClasses,
+    EnclosingMethod,
+    SourceDebugExtension,
+    BootstrapMethods,
+    Module,
+    ModulePackages,
+    ModuleMainClass,
+    NestHost,
+    NestMembers,
+    Record,
+    PermittedSubclasses,
+    Synthetic,
+    Deprecated,
+    Signature,
+    RuntimeVisibleAnnotations,
+    RuntimeInvisibleAnnotations,
+    RuntimeVisibleTypeAnnotations,
+    RuntimeInvisibleTypeAnnotations,
+    Unknown(String, Vec<u8>),
 }

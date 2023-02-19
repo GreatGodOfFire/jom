@@ -1,3 +1,5 @@
+pub mod instruction;
+
 use std::io::Cursor;
 
 use binrw::{binrw, BinRead};
@@ -7,6 +9,8 @@ use crate::{
     constant_pool::ConstantPool,
     error::JomResult,
 };
+
+use self::instruction::Instruction;
 
 #[binrw]
 pub(super) struct RawCode {
@@ -60,7 +64,7 @@ impl RawException {
 pub struct Code {
     pub max_stack: u16,
     pub max_locals: u16,
-    pub code: Vec<u8>,
+    pub code: Vec<Instruction>,
     pub exception_table: Vec<Exception>,
     pub attributes: Vec<CodeAttribute>,
 }
@@ -74,6 +78,15 @@ impl Code {
             exception_table,
             attributes,
         } = RawCode::read_be(&mut Cursor::new(info))?;
+
+        let len = code.len();
+        let mut cursor = Cursor::new(code);
+        let mut code = vec![];
+
+
+        while !cursor.position() < len as u64 {
+            code.push(Instruction::read(&mut cursor)?);
+        }
 
         let exception_table = exception_table
             .into_iter()

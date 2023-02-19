@@ -1,4 +1,4 @@
-mod attribute;
+pub mod attribute;
 pub mod constant_pool;
 pub mod error;
 pub mod field;
@@ -7,6 +7,7 @@ mod utf8;
 
 use std::io::Cursor;
 
+use attribute::{RawAttribute, ClassAttribute};
 use binrw::{binrw, BinRead};
 use constant_pool::{constant_pool_parser, ConstantPool, ConstantPoolIndex, RawConstantPoolIndex, process_cp};
 use error::JomResult;
@@ -43,6 +44,11 @@ struct RawClassFile {
     methods_count: u16,
     #[br(count = methods_count)]
     methods: Vec<RawMethodInfo>,
+    #[br(temp)]
+    #[bw(calc = attributes.len() as u16)]
+    attributes_count: u16,
+    #[br(count = attributes_count)]
+    attributes: Vec<RawAttribute>,
 }
 
 pub struct ClassFile {
@@ -55,6 +61,7 @@ pub struct ClassFile {
     interfaces: Vec<String>,
     fields: Vec<FieldInfo>,
     methods: Vec<MethodInfo>,
+    attributes: Vec<ClassAttribute>,
 }
 
 impl ClassFile {
@@ -69,6 +76,7 @@ impl ClassFile {
             interfaces,
             fields,
             methods,
+            attributes,
         } = RawClassFile::read(&mut Cursor::new(slice))?;
 
         let constant_pool = process_cp(constant_pool)?;
@@ -87,6 +95,7 @@ impl ClassFile {
             .into_iter()
             .map(|x| x.into_method_info(&constant_pool))
             .collect::<JomResult<Vec<_>>>()?;
+        let attributes = attributes.into_iter().map(|x| x.into_class_attr(&constant_pool)).collect::<JomResult<Vec<_>>>()?;
 
         Ok(Self {
             minor,
@@ -98,6 +107,7 @@ impl ClassFile {
             interfaces,
             fields,
             methods,
+            attributes,
         })
     }
 }
@@ -122,6 +132,7 @@ impl ClassFile {
             interfaces: vec![],
             fields: vec![],
             methods: vec![],
+            attributes: vec![],
         }
     }
 
@@ -159,5 +170,9 @@ impl ClassFile {
 
     pub fn methods(&self) -> &[MethodInfo] {
         &self.methods
+    }
+
+    pub fn attributes(&self) -> &[ClassAttribute] {
+        &self.attributes
     }
 }

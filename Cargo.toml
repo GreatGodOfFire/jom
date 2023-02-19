@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 binrw = "0.11"
 thiserror = "1.0"
+
